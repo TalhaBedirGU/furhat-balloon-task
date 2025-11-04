@@ -1,12 +1,13 @@
 # Furhat & XState starter
 To run:
+
 ```
-yarn tsx src/main.ts
+ssh -f -N -p 62266 -L 11434:127.0.0.1:11434 <your_id>@mltgpu.flov.gu.se
 ```
 
-To run in watch mode:
 ```
-yarn tsx watch src/main.ts
+npx tsx src/main.ts
 ```
+
 
 
