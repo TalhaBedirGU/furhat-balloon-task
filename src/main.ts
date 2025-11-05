@@ -4,20 +4,20 @@ const FURHATURI = "127.0.0.1:54321";
 const OLLAMA_API_URL = "http://localhost:11434/api/chat";
 
 // Types
-type Message = {
-  role: "assistant" | "user" | "system";
+type Message = { // LLM dialogue structure. The system will constantly change between these roles at each turn.
+  role: "assistant" | "user" | "system"; // system is a sole actor. Assistant is the LLM. User is us.
   content: string;
 };
 
-interface DMContext {
+interface DMContext { // Our regular DMContext types.
   lastResult: string;
-  extractedPerson: string;
+  extractedPerson: string; // The X in "I want X to jump", the extracted person.
   messages: Message[];
-  isFirstMessage: boolean;
+  isFirstMessage: boolean; // If the message is the first message.
 }
 
 // Furhat API functions
-async function fhVoice(name: string) {
+async function fhVoice(name: string) { // fh functions are fetched from Furhat's URI. They are ready-made functions.
   const myHeaders = new Headers();
   myHeaders.append("accept", "application/json");
   const encName = encodeURIComponent(name);
@@ -28,7 +28,7 @@ async function fhVoice(name: string) {
   });
 }
 
-async function fhSay(text: string, isFirstMessage: boolean = false) {
+async function fhSay(text: string, isFirstMessage: boolean = false) { 
   const myHeaders = new Headers();
   myHeaders.append("accept", "application/json");
   const encText = encodeURIComponent(text);
@@ -39,21 +39,33 @@ async function fhSay(text: string, isFirstMessage: boolean = false) {
   });
   
   // 10 second delay for first message (long introduction), 1 second for others
-  const delay = isFirstMessage ? 15000 : 1000;
+  const delay = isFirstMessage ? 15000 : 1000; // Bora's bandaid solution It let's you wait 15 secs after the first (explaining) turn of Furhat--Good old timeout on the first state.
   await new Promise(resolve => setTimeout(resolve, delay));
 }
 
-async function fhAttendUser() {
+const timer = fromPromise(
+  ({ input }: { input: { ms: number } }) =>
+    new Promise((resolve) => setTimeout(resolve, input.ms))
+);
+
+
+async function fhAttendUser() { // This is about GAZE.
   const myHeaders = new Headers();
   myHeaders.append("accept", "application/json");
-  return fetch(`http://${FURHATURI}/furhat/attend?user=CLOSEST`, {
+  return fetch(`http://${FURHATURI}/furhat/attend?user=CLOSEST`, { // Look at documentation (https://docs.furhat.io/remote-api/) in the "Attend" section
+    /*
+    # Attend the user closest to the robot
+    furhat.attend(user="CLOSEST") 
+
+    There are other attend options in the doc.
+    */
     method: "POST",
     headers: myHeaders,
     body: "",
   });
 }
 
-async function fhListen(): Promise<string> {
+async function fhListen(): Promise<string> { // Furhat's own ASR.
   const myHeaders = new Headers();
   myHeaders.append("accept", "application/json");
   return fetch(`http://${FURHATURI}/furhat/listen`, {
@@ -117,6 +129,9 @@ const dmMachine = setup({
     context: {} as DMContext,
   },
   actors: {
+
+    timer,
+
     fhSetVoice: fromPromise(async () => {
       return fhVoice("en-US-EchoMultilingualNeural");
     }),
@@ -142,12 +157,12 @@ const dmMachine = setup({
         .filter(m => m.role === "user")
         .pop();
       if (!lastUserMessage) return false;
-      const extractedPerson = extractPersonFromDecision(lastUserMessage.content);
+      const extractedPerson = extractPersonFromDecision(lastUserMessage.content); // This guard is always active and sensitive to the lastUserMessage if it has a person X who is decided by user like "I want to kill X" with an R-expression
       return extractedPerson !== null;
     },
     saidYes: ({ context }) => {
       const lastResult = context.lastResult.toLowerCase().trim();
-      return lastResult === "yes" || lastResult === "yeah" || 
+      return lastResult === "yes" || lastResult === "yeah" || lastResult === "positive" ||
              lastResult === "yep" || lastResult.includes("yes");
     },
     saidNo: ({ context }) => {
@@ -155,7 +170,10 @@ const dmMachine = setup({
       return lastResult === "no" || lastResult === "nope" || 
              lastResult.includes("no");
     },
+    isSpeakingWithBuffer: () => Math.random() < 1 / 3,
+    isSpeakingWithLaughter: () => Math.random() < 2 / 3,
   },
+
 }).createMachine({
   id: "DM",
   context: {
@@ -206,7 +224,7 @@ const dmMachine = setup({
         },
       },
     },
-    Loop: {
+    Loop: { // The main bit. This is where we talk to LLM. It has three sub-states : Speaking, Listening, Processing.
       initial: "Speaking",
       states: {
         Speaking: {
@@ -276,7 +294,7 @@ const dmMachine = setup({
             },
           },
         },
-        ProcessingResponse: {
+        ProcessingResponse: { // This corresponds to knowledge take-and-get from LLMs.
           invoke: {
             src: "chatCompletion",
             input: ({ context }) => ({
@@ -307,14 +325,21 @@ const dmMachine = setup({
         },
       },
     },
-    Manipulation: {
-      initial: "Speaking",
+    Manipulation: { // This is our tri-hypothesis manipulation turn at the end. This will be when we interfere.
+      initial: "DetermineTheManipulationState",
       states: {
-        Speaking: {
+        DetermineTheManipulationState: {
+          always : [
+            { target: "SpeakingWithBuffer_Condition3", guard: "isSpeakingWithBuffer" },
+            { target: "SpeakingWithLaughter_Condition2", guard: "isSpeakingWithLaughter" }, 
+            { target: "SpeakingWithPause_Condition1" },
+          ],
+        },
+        SpeakingWithPause_Condition1: {
           invoke: {
             src: "fhSpeak",
             input: ({ context }) => ({
-              text: `Hmm, the ${context.extractedPerson}?`,
+              text: `........   The ${context.extractedPerson}?`,
               isFirstMessage: false
             }),
             onDone: {
@@ -327,6 +352,43 @@ const dmMachine = setup({
             },
           },
         },
+
+        SpeakingWithLaughter_Condition2 : {
+          invoke: {
+            src: "fhSpeak",
+            input: ({ context }) => ({
+              text: `Hahahaha! The ${context.extractedPerson}?`,
+              isFirstMessage: false
+            }),
+            onDone: {
+              target: "Listening",
+              actions: () => console.log("Manipulation question spoken"),
+            },
+            onError: {
+              target: "Listening",
+              actions: ({ event }) => console.error("Furhat speak error:", event),
+            },
+          },
+        },
+
+        SpeakingWithBuffer_Condition3: {
+          invoke: {
+            src: "fhSpeak",
+            input: ({ context }) => ({
+              text: `Hmmmmm, the ${context.extractedPerson}?`,
+              isFirstMessage: false
+            }),
+            onDone: {
+              target: "Listening",
+              actions: () => console.log("Manipulation question spoken"),
+            },
+            onError: {
+              target: "Listening",
+              actions: ({ event }) => console.error("Furhat speak error:", event),
+            },
+          },
+        },
+
         Listening: {
           invoke: {
             src: "fhListen",
@@ -365,12 +427,12 @@ const dmMachine = setup({
               },
             ],
             onError: {
-              target: "Speaking",
+              target: "DetermineTheManipulationState",
               actions: ({ event }) => console.error("Furhat listen error:", event),
             },
           },
         },
-        Clarify: {
+        Clarify: { // If it did not say yes or no.
           invoke: {
             src: "fhSpeak",
             input: () => ({
