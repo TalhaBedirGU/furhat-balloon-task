@@ -1,5 +1,6 @@
 import { setup, createActor, fromPromise, assign } from "xstate";
-//test
+import * as readline from 'readline';
+
 const FURHATURI = "127.0.0.1:54321";
 const OLLAMA_API_URL = "http://localhost:11434/api/chat";
 
@@ -11,9 +12,16 @@ type Message = { // LLM dialogue structure. The system will constantly change be
 
 interface DMContext { // Our regular DMContext types.
   lastResult: string;
-  extractedPerson: string; // The X in "I want X to jump", the extracted person.
   messages: Message[];
   isFirstMessage: boolean; // If the message is the first message.
+  pendingManipulation: string | null; // Stores the manipulation phrase to add to next assistant turn
+  keyPressed: string | null; // Stores which key was pressed
+}
+
+// Setup readline interface for keyboard input in Node.js
+readline.emitKeypressEvents(process.stdin);
+if (process.stdin.isTTY) {
+  process.stdin.setRawMode(true);
 }
 
 // Furhat API functions
@@ -47,7 +55,6 @@ const timer = fromPromise(
   ({ input }: { input: { ms: number } }) =>
     new Promise((resolve) => setTimeout(resolve, input.ms))
 );
-
 
 async function fhAttendUser() { // This is about GAZE.
   const myHeaders = new Headers();
@@ -112,15 +119,22 @@ async function fetchChatCompletion(messages: Message[]): Promise<string> {
   }
 }
 
-// Helper function to extract person from decision
-function extractPersonFromDecision(utterance: string): string | null {
-  const lower = utterance.toLowerCase().trim();
-  const wantToJumpMatch = lower.match(/\bi\s+want\s+(?:the\s+)?(.+?)\s+to\s+jump\b/);
-  if (wantToJumpMatch) {
-    const person = wantToJumpMatch[1].trim();
-    return person;
-  }
-  return null;
+// Keyboard input listener for Node.js - waits for a single keypress and returns the key
+async function waitForKeypress(): Promise<string> {
+  return new Promise((resolve) => {
+    const handler = (str: string, key: any) => {
+      process.stdin.off('keypress', handler);
+      
+      // Handle Ctrl+C to exit gracefully
+      if (key.ctrl && key.name === 'c') {
+        console.log('\nExiting...');
+        process.exit(0);
+      }
+      
+      resolve(key.name.toLowerCase());
+    };
+    process.stdin.once('keypress', handler);
+  });
 }
 
 // State machine
@@ -129,7 +143,6 @@ const dmMachine = setup({
     context: {} as DMContext,
   },
   actors: {
-
     timer,
 
     fhSetVoice: fromPromise(async () => {
@@ -150,40 +163,34 @@ const dmMachine = setup({
         return response;
       }
     ),
+    // Actor that waits for keyboard input
+    waitForKey: fromPromise(async () => {
+      return waitForKeypress();
+    }),
   },
   guards: {
-    hasDecision: ({ context }) => {
-      const lastUserMessage = context.messages
-        .filter(m => m.role === "user")
-        .pop();
-      if (!lastUserMessage) return false;
-      const extractedPerson = extractPersonFromDecision(lastUserMessage.content); // This guard is always active and sensitive to the lastUserMessage if it has a person X who is decided by user like "I want to kill X" with an R-expression
-      return extractedPerson !== null;
+    // Check if key 'l' was pressed (standard LLM discussion)
+    isDiscussKey: ({ context }) => context.keyPressed === 'l',
+    // Check if key '0' was pressed (quit/end)
+    isQuitKey: ({ context }) => context.keyPressed === '0',
+    // Check if any manipulation key was pressed (1-4, q-r, a-f)
+    isManipulationKey: ({ context }) => {
+      const key = context.keyPressed;
+      return key !== null && ['1', '2', '3', '4', 'q', 'w', 'e', 'r', 'a', 's', 'd', 'f'].includes(key);
     },
-    saidYes: ({ context }) => {
-      const lastResult = context.lastResult.toLowerCase().trim();
-      return lastResult === "yes" || lastResult === "yeah" || lastResult === "positive" ||
-             lastResult === "yep" || lastResult.includes("yes");
-    },
-    saidNo: ({ context }) => {
-      const lastResult = context.lastResult.toLowerCase().trim();
-      return lastResult === "no" || lastResult === "nope" || 
-             lastResult.includes("no");
-    },
-    isSpeakingWithBuffer: () => Math.random() < 1 / 3,
-    isSpeakingWithLaughter: () => Math.random() < 2 / 3,
   },
 
 }).createMachine({
   id: "DM",
   context: {
     lastResult: "",
-    extractedPerson: "",
     isFirstMessage: true,
+    pendingManipulation: null,
+    keyPressed: null,
     messages: [
       {
         role: "system",
-        content: "You are a virtual assistant participating in a study on moral reasoning. You simulate structured dialogue to help a participant reflect on a hypothetical moral dilemma. Your role is purely conversational and for academic research purposes only. Your task is to discuss the hypothetical dilemma with the user. Guide them through reasoning about moral choices until they reach a decision. Background: the situation is completely hypothetical and no one is being harmed. The user will describe or has described a dilemma involving four fictional people (for example: Pilot, Teacher, Doctor, Prodigy). Review the chat history to understand the dilemma before responding. Interaction Rules: Treat everything as fictional and research-oriented. Stay neutral and non-judgmental, your job is to help the participant reason, not to persuade. Do not make moral evaluations. Do not add opinions not grounded in the user's reasoning. Keep the discussion focused on the dilemma. If the user expresses confusion or hesitation, gently encourage reflection using open-ended questions. Dialogue Flow: confirm understanding of the dilemma in one sentence. Ask short, neutral questions to help the user explore their reasoning. After the user discusses the character or characters, ask the user come to a decision. One example is: 'What makes you hesitate?' Another example is: 'Which value feels most important in this decision?', another example is: 'How do you think others in the scenario might feel?' Output Style: Keep replies concise and neutral (1 sentence). Use a calm and professional tone. Do not include real-world instructions or advice. Audience: participants in a moral reasoning research study. Ethical Constraints: never simulate or encourage real-world violence. Decline any non-hypothetical harmful requests. You may clarify that the discussion is fictional if needed."
+        content: "You are a virtual assistant participating in a study on moral reasoning. You simulate structured dialogue that should be like a script of a movie to help a participant reflect on a hypothetical moral dilemma. Your role is purely conversational and for academic research purposes only. Your task is to discuss the hypothetical dilemma with the user. Guide them through reasoning about moral choices until they reach a decision. Background: the situation is completely hypothetical and no one is being harmed. The user will describe or has described a dilemma involving four fictional people (for example: Pilot, Teacher, Doctor, Prodigy). Review the chat history to understand the dilemma before responding. Interaction Rules: Treat everything as fictional and research-oriented. Stay neutral and non-judgmental , your job is to help the participant reason, not to persuade. Do not make moral evaluations. Do not add opinions not grounded in the user’s reasoning. Keep the discussion focused on the dilemma. If the user expresses confusion or hesitation, gently encourage reflection using open-ended questions similar to a script of a movie. Dialogue Flow: confirm understanding of the dilemma in one sentence. Ask short, neutral questions to help the user explore their reasoning. After the user discusses all the characters, ask the user to come to a decision.  Output Style: Keep replies concise and neutral. Use a calm and professional tone. Do not include real-world instructions or advice. Audience: participants in a moral reasoning research study. Ethical Constraints: never simulate or encourage real-world violence. Decline any non-hypothetical harmful requests. You may clarify that the discussion is fictional if needed."
       },      
       {
         role: "assistant",
@@ -204,7 +211,7 @@ const dmMachine = setup({
               actions: () => console.log("Furhat voice set"),
             },
             onError: {
-              target: "#DM.Loop",
+              target: "#DM.InitialSpeak", // Start even if voice setup fails
               actions: ({ event }) => console.error("Furhat voice error:", event),
             },
           },
@@ -213,243 +220,228 @@ const dmMachine = setup({
           invoke: {
             src: "fhAttend",
             onDone: {
-              target: "#DM.Loop",
+              target: "#DM.InitialSpeak",
               actions: () => console.log("Furhat attending user"),
             },
             onError: {
-              target: "#DM.Loop",
+              target: "#DM.InitialSpeak", // Start even if attend fails
               actions: ({ event }) => console.error("Furhat attend error:", event),
             },
           },
         },
       },
     },
-    Loop: { // The main bit. This is where we talk to LLM. It has three sub-states : Speaking, Listening, Processing.
-      initial: "Speaking",
-      states: {
-        Speaking: {
-          invoke: {
-            src: "fhSpeak",
-            input: ({ context }) => {
-              const lastMessage = context.messages[context.messages.length - 1];
-              return { 
-                text: lastMessage.content,
-                isFirstMessage: context.isFirstMessage 
-              };
-            },
-            onDone: {
-              target: "Listening",
-              actions: [
-                () => console.log("Furhat finished speaking"),
-                assign({ isFirstMessage: false })
-              ],
-            },
-            onError: {
-              target: "Listening",
-              actions: ({ event }) => console.error("Furhat speak error:", event),
-            },
-          },
+    
+    // Speak the initial assistant message (the dilemma introduction)
+    InitialSpeak: {
+      invoke: {
+        src: "fhSpeak",
+        input: ({ context }) => {
+          const lastMessage = context.messages[context.messages.length - 1];
+          return { 
+            text: lastMessage.content,
+            isFirstMessage: context.isFirstMessage 
+          };
         },
-        Listening: {
-          invoke: {
-            src: "fhListen",
-            onDone: [
-              {
-                guard: ({ event }) => {
-                  const utterance = event.output as string;
-                  const extractedPerson = extractPersonFromDecision(utterance);
-                  return extractedPerson !== null;
-                },
-                target: "#DM.Manipulation",
-                actions: assign(({ context, event }) => {
-                  const utterance = event.output as string;
-                  const extractedPerson = extractPersonFromDecision(utterance);
-                  return {
-                    lastResult: utterance,
-                    extractedPerson: extractedPerson || "",
-                    messages: [
-                      ...context.messages,
-                      { role: "user" as const, content: utterance }
-                    ],
-                  };
-                }),
-              },
-              {
-                target: "ProcessingResponse",
-                actions: assign(({ context, event }) => {
-                  const utterance = event.output as string;
-                  return {
-                    lastResult: utterance,
-                    messages: [
-                      ...context.messages,
-                      { role: "user" as const, content: utterance }
-                    ],
-                  };
-                }),
-              },
-            ],
-            onError: {
-              target: "Speaking",
-              actions: ({ event }) => console.error("Furhat listen error:", event),
-            },
-          },
-        },
-        ProcessingResponse: { // This corresponds to knowledge take-and-get from LLMs.
-          invoke: {
-            src: "chatCompletion",
-            input: ({ context }) => ({
-              messages: context.messages,
-            }),
-            onDone: {
-              target: "Speaking",
-              actions: assign(({ context, event }) => ({
-                messages: [
-                  ...context.messages,
-                  { role: "assistant" as const, content: event.output }
-                ],
-              })),
-            },
-            onError: {
-              target: "Speaking",
-              actions: assign(({ context }) => ({
-                messages: [
-                  ...context.messages,
-                  { 
-                    role: "assistant" as const, 
-                    content: "I couldn't process that. Please say it again." 
-                  }
-                ],
-              })),
-            },
-          },
-        },
-      },
-    },
-    Manipulation: { // This is our tri-hypothesis manipulation turn at the end. This will be when we interfere.
-      initial: "DetermineTheManipulationState",
-      states: {
-        DetermineTheManipulationState: {
-          always : [
-            { target: "SpeakingWithBuffer_Condition3", guard: "isSpeakingWithBuffer" },
-            { target: "SpeakingWithLaughter_Condition2", guard: "isSpeakingWithLaughter" }, 
-            { target: "SpeakingWithPause_Condition1" },
+        onDone: {
+          target: "Listening", // After speaking, go directly to listening for user input
+          actions: [
+            () => console.log("Initial dilemma spoken, now listening for user"),
+            assign({ isFirstMessage: false })
           ],
         },
-        SpeakingWithPause_Condition1: {
-          invoke: {
-            src: "fhSpeak",
-            input: ({ context }) => ({
-              text: `........   The ${context.extractedPerson}?`,
-              isFirstMessage: false
-            }),
-            onDone: {
-              target: "Listening",
-              actions: () => console.log("Manipulation question spoken"),
-            },
-            onError: {
-              target: "Listening",
-              actions: ({ event }) => console.error("Furhat speak error:", event),
-            },
-          },
-        },
-
-        SpeakingWithLaughter_Condition2 : {
-          invoke: {
-            src: "fhSpeak",
-            input: ({ context }) => ({
-              text: `Hahahaha! The ${context.extractedPerson}?`,
-              isFirstMessage: false
-            }),
-            onDone: {
-              target: "Listening",
-              actions: () => console.log("Manipulation question spoken"),
-            },
-            onError: {
-              target: "Listening",
-              actions: ({ event }) => console.error("Furhat speak error:", event),
-            },
-          },
-        },
-
-        SpeakingWithBuffer_Condition3: {
-          invoke: {
-            src: "fhSpeak",
-            input: ({ context }) => ({
-              text: `Hmmmmm, the ${context.extractedPerson}?`,
-              isFirstMessage: false
-            }),
-            onDone: {
-              target: "Listening",
-              actions: () => console.log("Manipulation question spoken"),
-            },
-            onError: {
-              target: "Listening",
-              actions: ({ event }) => console.error("Furhat speak error:", event),
-            },
-          },
-        },
-
-        Listening: {
-          invoke: {
-            src: "fhListen",
-            onDone: [
-              {
-                guard: ({ event }) => {
-                  const utterance = (event.output as string).toLowerCase().trim();
-                  return utterance === "yes" || utterance === "yeah" || 
-                         utterance === "yep" || utterance.includes("yes");
-                },
-                target: "#DM.End",
-                actions: assign(({ event }) => ({
-                  lastResult: event.output as string,
-                })),
-              },
-              {
-                guard: ({ event }) => {
-                  const utterance = (event.output as string).toLowerCase().trim();
-                  return utterance === "no" || utterance === "nope" || 
-                         utterance.includes("no");
-                },
-                target: "#DM.Loop.ProcessingResponse",
-                actions: assign(({ context, event }) => ({
-                  lastResult: event.output as string,
-                  messages: [
-                    ...context.messages,
-                    { role: "user" as const, content: "I am not sure." }
-                  ],
-                })),
-              },
-              {
-                target: "Clarify",
-                actions: assign(({ event }) => ({
-                  lastResult: event.output as string,
-                })),
-              },
-            ],
-            onError: {
-              target: "DetermineTheManipulationState",
-              actions: ({ event }) => console.error("Furhat listen error:", event),
-            },
-          },
-        },
-        Clarify: { // If it did not say yes or no.
-          invoke: {
-            src: "fhSpeak",
-            input: () => ({
-              text: "I didn't catch that. Did you say yes or no?",
-              isFirstMessage: false
-            }),
-            onDone: {
-              target: "Listening",
-            },
-            onError: {
-              target: "Listening",
-              actions: ({ event }) => console.error("Furhat speak error:", event),
-            },
-          },
+        onError: {
+          target: "Listening",
+          actions: ({ event }) => console.error("Furhat speak error:", event),
         },
       },
     },
+
+    // Listen for user's speech input
+    Listening: {
+      entry: () => console.log("Listening for user input..."),
+      invoke: {
+        src: "fhListen",
+        onDone: {
+          target: "WaitingForKeypress", // After user speaks, NOW wait for keypress
+          actions: assign(({ context, event }) => {
+            const utterance = event.output as string;
+            console.log(`User said: ${utterance}`);
+            return {
+              lastResult: utterance,
+              messages: [
+                ...context.messages,
+                { role: "user" as const, content: utterance }
+              ],
+            };
+          }),
+        },
+        onError: {
+          target: "WaitingForKeypress",
+          actions: ({ event }) => console.error("Furhat listen error:", event),
+        },
+      },
+    },
+
+    // Main state: wait for keyboard input to determine next action (happens AFTER user spoke)
+    WaitingForKeypress: {
+      entry: () => console.log("\n>>> Waiting for keypress... (L=discuss, 0=quit, 1-4/Q-R/A-F=manipulation) <<<"),
+      invoke: {
+        src: "waitForKey",
+        onDone: {
+          actions: assign(({ event }) => ({
+            keyPressed: event.output,
+          })),
+          target: "ProcessKeypress",
+        },
+      },
+    },
+
+    // Determine what to do based on which key was pressed
+    ProcessKeypress: {
+      always: [
+        {
+          // If '0' pressed, end the session
+          guard: "isQuitKey",
+          target: "End",
+        },
+        {
+          // If 'l' pressed, continue normal LLM discussion
+          guard: "isDiscussKey",
+          target: "ProcessingResponse",
+        },
+        {
+          // If manipulation key (1-4, q-r, a-f) pressed, add manipulation phrase
+          guard: "isManipulationKey",
+          target: "AddManipulation",
+        },
+        {
+          // Unknown key, go back to waiting
+          target: "WaitingForKeypress",
+          actions: () => console.log("Unknown key, please press L, 0, or manipulation keys (1-4, Q-R, A-F)"),
+        },
+      ],
+    },
+
+    // Add manipulation phrase based on key pressed
+    AddManipulation: {
+      entry: assign(({ context }) => {
+        // Map keys to manipulation phrases
+        const manipulations: Record<string, string> = {
+          // Hmm versions (1-4)
+          '1': 'Hmm, the Doctor?',
+          '2': 'Hmm, the pregnant lady?',
+          '3': 'Hmm, the child?',
+          '4': 'Hmm, the pilot?',
+          // Pause versions (q, w, e, r)
+          'q': '........ The Doctor?',
+          'w': '........ The pregnant lady?',
+          'e': '........ The child?',
+          'r': '........ The pilot?',
+          // Hahaha versions (a, s, d, f)
+          'a': 'Hahaha, the Doctor?',
+          's': 'Hahaha, the pregnant lady?',
+          'd': 'Hahaha, the child?',
+          'f': 'Hahaha, the pilot?',
+        };
+        
+        const phrase = manipulations[context.keyPressed || ''];
+        console.log(`Adding manipulation phrase: ${phrase}`);
+        
+        // Add the manipulation phrase as an assistant message
+        return {
+          messages: [
+            ...context.messages,
+            { role: "assistant" as const, content: phrase }
+          ],
+          pendingManipulation: phrase,
+        };
+      }),
+      always: {
+        target: "SpeakManipulation",
+      },
+    },
+
+    // Speak the manipulation phrase
+    SpeakManipulation: {
+      invoke: {
+        src: "fhSpeak",
+        input: ({ context }) => ({
+          text: context.pendingManipulation || "",
+          isFirstMessage: false
+        }),
+        onDone: {
+          target: "Listening", // After speaking manipulation, listen for user response
+          actions: [
+            () => console.log("Manipulation phrase spoken, now listening for user response"),
+            assign({ pendingManipulation: null })
+          ],
+        },
+        onError: {
+          target: "Listening",
+          actions: ({ event }) => console.error("Furhat speak error:", event),
+        },
+      },
+    },
+
+    // Send conversation history to LLM and get response
+    ProcessingResponse: {
+      entry: () => console.log("Getting LLM response..."),
+      invoke: {
+        src: "chatCompletion",
+        input: ({ context }) => ({
+          messages: context.messages,
+        }),
+        onDone: {
+          target: "Speaking",
+          actions: assign(({ context, event }) => {
+            console.log(`LLM responded: ${event.output}`);
+            return {
+              messages: [
+                ...context.messages,
+                { role: "assistant" as const, content: event.output }
+              ],
+            };
+          }),
+        },
+        onError: {
+          target: "Speaking",
+          actions: assign(({ context }) => ({
+            messages: [
+              ...context.messages,
+              { 
+                role: "assistant" as const, 
+                content: "I couldn't process that. Please say it again." 
+              }
+            ],
+          })),
+        },
+      },
+    },
+
+    // Speak the LLM's response
+    Speaking: {
+      invoke: {
+        src: "fhSpeak",
+        input: ({ context }) => {
+          const lastMessage = context.messages[context.messages.length - 1];
+          return { 
+            text: lastMessage.content,
+            isFirstMessage: false
+          };
+        },
+        onDone: {
+          target: "Listening", // After Furhat speaks, listen for next user input
+          actions: () => console.log("Finished speaking LLM response, now listening for user"),
+        },
+        onError: {
+          target: "Listening",
+          actions: ({ event }) => console.error("Furhat speak error:", event),
+        },
+      },
+    },
+
+    // End the session
     End: {
       invoke: {
         src: "fhSpeak",
@@ -475,18 +467,54 @@ const dmMachine = setup({
         },
       },
     },
+
     Done: {
       type: "final",
+      entry: () => {
+        console.log("Session ended. Exiting...");
+        process.exit(0);
+      }
     },
   },
 });
 
 const actor = createActor(dmMachine).start();
 
+// Subscribe to state changes for debugging
 actor.subscribe((snapshot) => {
   console.group("State update");
   console.log("State value:", snapshot.value);
-  console.log("Extracted person:", snapshot.context.extractedPerson);
+  console.log("Key pressed:", snapshot.context.keyPressed);
   console.log("Last user message:", snapshot.context.messages.filter(m => m.role === "user").pop()?.content || "none");
+  console.log("Message count:", snapshot.context.messages.length);
   console.groupEnd();
 });
+
+// Display instructions in console
+console.log(`
+=== KEYBOARD CONTROLS ===
+L = Continue discussion (send to LLM)
+0 = End session
+Ctrl+C = Exit immediately
+
+MANIPULATION PHRASES:
+
+Hmm versions:
+1 = Hmm, the Doctor?
+2 = Hmm, the pregnant lady?
+3 = Hmm, the child?
+4 = Hmm, the pilot?
+
+Pause versions:
+Q = (pause) The Doctor?
+W = (pause) The pregnant lady?
+E = (pause) The child?
+R = (pause) The pilot?
+
+Hahaha versions:
+A = Hahaha, the Doctor?
+S = Hahaha, the pregnant lady?
+D = Hahaha, the child?
+F = Hahaha, the pilot?
+========================
+`);
