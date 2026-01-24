@@ -1,7 +1,7 @@
 # Furhat & XState starter
 To run:
 
-First, open Furhat SDK desktop launcher. Then click on Remote API. On the webpage (default password is "admin"), select a Neural English voice. After that, clone the repository and in the repository, run:
+First, open Furhat SDK desktop launcher. Then click on Remote API. On the webpage (default password is "admin"), select a Neural English voice (Gregory Neural by default). After that, clone the repository and in the repository, run:
 
 ```
 yarn
