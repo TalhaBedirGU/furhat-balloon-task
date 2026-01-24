@@ -6,7 +6,9 @@ First, open Furhat SDK desktop launcher. Then click on Remote API. On the webpag
 ```
 yarn
 ```
-
+```
+yarn up
+```
 ```
 ssh -f -N -p 62266 -L 11434:127.0.0.1:11434 <your_id>@mltgpu.flov.gu.se
 ```
