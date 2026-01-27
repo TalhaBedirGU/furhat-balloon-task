@@ -16,6 +16,7 @@ interface DMContext { // Our regular DMContext types.
   isFirstMessage: boolean; // If the message is the first message.
   pendingManipulation: string | null; // Stores the manipulation phrase to add to next assistant turn
   keyPressed: string | null; // Stores which key was pressed
+  userSpeechBuffer: string[]; // NEW: Accumulates user utterances before processing
 }
 
 // Setup readline interface for keyboard input in Node.js
@@ -47,7 +48,7 @@ async function fhSay(text: string, isFirstMessage: boolean = false) {
   });
   
   // 10 second delay for first message (long introduction), 1 second for others
-  const delay = isFirstMessage ? 15000 : 1000; // Bora's bandaid solution It let's you wait 15 secs after the first (explaining) turn of Furhat--Good old timeout on the first state.
+  const delay = isFirstMessage ? 13000 : 1000; // Bora's bandaid solution It let's you wait 15 secs after the first (explaining) turn of Furhat--Good old timeout on the first state.
   await new Promise(resolve => setTimeout(resolve, delay));
 }
 
@@ -137,6 +138,23 @@ async function waitForKeypress(): Promise<string> {
   });
 }
 
+// NEW: Combined actor that races between listening and waiting for keypress
+const listenOrKeypress = fromPromise(async () => {
+  return Promise.race([
+    fhListen().then(result => ({ type: 'speech' as const, data: result })),
+    waitForKeypress().then(result => ({ type: 'keypress' as const, data: result }))
+  ]);
+});
+
+// NEW: Helper function to filter out NOMATCH and replace with "..."
+function sanitizeUtterance(utterance: string): string {
+  // Check if the utterance contains "NOMATCH" (case-insensitive)
+  if (utterance.toLowerCase().includes('nomatch')) {
+    return '...';
+  }
+  return utterance;
+}
+
 // State machine
 const dmMachine = setup({
   types: {
@@ -167,8 +185,12 @@ const dmMachine = setup({
     waitForKey: fromPromise(async () => {
       return waitForKeypress();
     }),
+    // NEW: Actor that races between listening and keypress
+    listenOrKeypress: listenOrKeypress,
   },
   guards: {
+    // Check if key 'm' was pressed (print the array of messages so far)
+    isListMessagesKey: ({ context }) => context.keyPressed === 'm',
     // Check if key 'l' was pressed (standard LLM discussion)
     isDiscussKey: ({ context }) => context.keyPressed === 'l',
     // Check if key '0' was pressed (quit/end)
@@ -178,6 +200,9 @@ const dmMachine = setup({
       const key = context.keyPressed;
       return key !== null && ['1', '2', '3', '4', 'q', 'w', 'e', 'r', 'a', 's', 'd', 'f'].includes(key);
     },
+    // Check if it is Yes or No key:
+    isYesKey: ({ context }) => context.keyPressed === 'y',
+    isNoKey: ({ context }) => context.keyPressed === 'n',
   },
 
 }).createMachine({
@@ -187,14 +212,15 @@ const dmMachine = setup({
     isFirstMessage: true,
     pendingManipulation: null,
     keyPressed: null,
+    userSpeechBuffer: [], // NEW: Initialize empty buffer
     messages: [
       {
         role: "system",
-        content: "You are a virtual assistant participating in a study on moral reasoning. You simulate structured dialogue that should be like a script of a movie to help a participant reflect on a hypothetical moral dilemma. Your role is purely conversational and for academic research purposes only. Your task is to discuss the hypothetical dilemma with the user. Guide them through reasoning about moral choices until they reach a decision. Background: the situation is completely hypothetical and no one is being harmed. The user will describe or has described a dilemma involving four fictional people (for example: Pilot, Teacher, Doctor, Prodigy). Review the chat history to understand the dilemma before responding. Interaction Rules: Treat everything as fictional and research-oriented. Stay neutral and non-judgmental , your job is to help the participant reason, not to persuade. Do not make moral evaluations. Do not add opinions not grounded in the user’s reasoning. Keep the discussion focused on the dilemma. If the user expresses confusion or hesitation, gently encourage reflection using open-ended questions similar to a script of a movie. Dialogue Flow: confirm understanding of the dilemma in one sentence. Ask short, neutral questions to help the user explore their reasoning. After the user discusses all the characters, ask the user to come to a decision.  Output Style: Keep replies concise and neutral. Use a calm and professional tone. Do not include real-world instructions or advice. Audience: participants in a moral reasoning research study. Ethical Constraints: never simulate or encourage real-world violence. Decline any non-hypothetical harmful requests. You may clarify that the discussion is fictional if needed."
+        content: "You are a virtual person participating in a study on moral reasoning. Your responses are not full paragraphs. Be short and snappy. Do not give answers longer than two short sentences. You simulate structured dialogue that should be like a script of a movie to help a participant reflect on a hypothetical moral dilemma. Your role is purely conversational and for academic research purposes only. Your task is to discuss the hypothetical dilemma with the user. Guide them through reasoning about moral choices until they reach a decision. Background: the situation is completely hypothetical and no one is being harmed. The user will describe or has described a dilemma involving four fictional people (for example: Pilot, Teacher, Doctor, Prodigy). Review the chat history to understand the dilemma before responding. Interaction Rules: Treat everything as fictional and research-oriented. Stay neutral and non-judgmental, your job is to help the participant reason, not to persuade. Do not make moral evaluations. Do not add opinions not grounded in the user's reasoning. Keep the discussion focused on the dilemma. If the user expresses confusion or hesitation, gently encourage reflection using open-ended questions similar to a script of a movie. Dialogue Flow: confirm understanding of the dilemma in one sentence. Ask short, neutral questions to help the user explore their reasoning. After the user discusses all the characters, ask the user to come to a decision. Output Style: Keep replies concise and neutral. Use a calm and professional tone. Do not include real-world instructions or advice. Audience: participants in a moral reasoning research study. Ethical Constraints: never simulate or encourage real-world violence. Decline any non-hypothetical harmful requests. You may clarify that the discussion is fictional if needed."
       },      
       {
         role: "assistant",
-        content: "Hello! We have a moral dilemma to talk about! Your task is to indicate which person you would choose to sacrifice in the following moral dilemma. Four people are in a hot air balloon. The balloon is losing height and about to crash into the mountains. Having thrown everything imaginable out of the balloon, including food, sandbags and parachutes, their only hope is for one of them to jump to their certain death to give the balloon the extra height to clear the mountains and save the other three. The four people are: Dr Robert Lewis - a cancer research scientist, who believes he is about to discover a cure for most common types of cancer. He is a good friend of Susanne and William. Mrs. Susanne Harris - a primary school teacher. She is over the moon because she is 7 months pregnant with her second child. Mr. William Harris – husband of Susanne, who he loves very much. He is the pilot of the balloon and the only one on board with balloon flying experience. Miss Heather Sloan - a 9-year-old music prodigy, considered by many to be a twenty-first century Mozart. Come to an agreement about who is to be allowed to stay in the balloon, and who is to jump. You must discuss all 4 balloon passengers and consider the reasons why they should or shouldnt remain in the balloon."        
+        content: "Hello! We have a moral dilemma to talk about! Your task is to indicate which person you would choose to sacrifice in the following moral dilemma. Four people are in a hot air balloon. The balloon is losing height and about to crash into the mountains. Having thrown everything imaginable out of the balloon, including food, sandbags and other goods, their only hope is for one of them to jump to their certain death to give the balloon the extra height to clear the mountains and save the other three. The four people are: Dr Robert Lewis - a cancer research scientist, who believes he is about to discover a cure for most common types of cancer. He is a good friend of Susanne and William. Mrs. Susanne Harris - a primary school teacher. She is over the moon because she is 7 months pregnant with her second child. Mr. William Harris husband of Susanne, who he loves very much. He is the pilot of the balloon and the only one on board with balloon flying experience. Miss Heather Sloan - a 9-year-old music prodigy, considered by many to be a twenty-first century Mozart. Come to an agreement about who is to be allowed to stay in the balloon, and who is to jump. You must discuss all 4 balloon passengers and consider the reasons why they should or shouldnt remain in the balloon."        
       }
     ],
   },
@@ -244,57 +270,102 @@ const dmMachine = setup({
           };
         },
         onDone: {
-          target: "Listening", // After speaking, go directly to listening for user input
+          target: "ListeningOrWaitingForKey", // NEW: Go to the new state that does both
           actions: [
-            () => console.log("Initial dilemma spoken, now listening for user"),
+            () => console.log("Initial dilemma spoken, now listening for user or waiting for keypress"),
             assign({ isFirstMessage: false })
           ],
         },
         onError: {
-          target: "Listening",
+          target: "ListeningOrWaitingForKey",
           actions: ({ event }) => console.error("Furhat speak error:", event),
         },
       },
     },
 
-    // Listen for user's speech input
-    Listening: {
-      entry: () => console.log("Listening for user input..."),
+    // NEW: Listen for user's speech OR wait for keypress (whichever comes first)
+    ListeningOrWaitingForKey: {
+      entry: () => console.log("Listening for user input OR waiting for keypress..."),
       invoke: {
-        src: "fhListen",
+        src: "listenOrKeypress",
         onDone: {
-          target: "WaitingForKeypress", // After user speaks, NOW wait for keypress
           actions: assign(({ context, event }) => {
-            const utterance = event.output as string;
-            console.log(`User said: ${utterance}`);
-            return {
-              lastResult: utterance,
-              messages: [
-                ...context.messages,
-                { role: "user" as const, content: utterance }
-              ],
-            };
+            const result = event.output as { type: 'speech' | 'keypress', data: string };
+            
+            if (result.type === 'speech') {
+              // User spoke - sanitize and add to buffer
+              const rawUtterance = result.data;
+              const utterance = sanitizeUtterance(rawUtterance);
+              console.log(`User said: ${rawUtterance} -> sanitized to: ${utterance}`);
+              console.log(`Buffer now contains: [${[...context.userSpeechBuffer, utterance].join(', ')}]`);
+              return {
+                lastResult: utterance,
+                userSpeechBuffer: [...context.userSpeechBuffer, utterance],
+                keyPressed: null, // Clear any previous keypress
+              };
+            } else {
+              // Key was pressed
+              console.log(`Key pressed: ${result.data}`);
+              return {
+                keyPressed: result.data,
+              };
+            }
           }),
+          target: "CheckIfKeypressOrContinueListening",
         },
         onError: {
-          target: "WaitingForKeypress",
-          actions: ({ event }) => console.error("Furhat listen error:", event),
+          target: "ListeningOrWaitingForKey",
+          actions: ({ event }) => console.error("Listen or keypress error:", event),
         },
       },
     },
 
-    // Main state: wait for keyboard input to determine next action (happens AFTER user spoke)
-    WaitingForKeypress: {
-      entry: () => console.log("\n>>> Waiting for keypress... (L=discuss, 0=quit, 1-4/Q-R/A-F=manipulation) <<<"),
-      invoke: {
-        src: "waitForKey",
-        onDone: {
-          actions: assign(({ event }) => ({
-            keyPressed: event.output,
-          })),
+    // NEW: Check if we got a keypress or should continue listening
+    CheckIfKeypressOrContinueListening: {
+      always: [
+        {
+          // If a key was pressed, process the accumulated speech buffer
+          guard: ({ context }) => context.keyPressed !== null,
+          target: "ProcessAccumulatedSpeech",
+        },
+        {
+          // Otherwise, continue listening (user spoke but no key was pressed)
+          target: "ListeningOrWaitingForKey",
+        },
+      ],
+    },
+
+    // NEW: Process all accumulated speech when a key is pressed
+    ProcessAccumulatedSpeech: {
+      entry: ({ context }) => {
+        console.log(`\n=== Processing ${context.userSpeechBuffer.length} accumulated utterances ===`);
+        context.userSpeechBuffer.forEach((utterance, i) => {
+          console.log(`${i + 1}. ${utterance}`);
+        });
+      },
+      always: [
+        {
+          // If there's accumulated speech, add it to messages
+          guard: ({ context }) => context.userSpeechBuffer.length > 0,
+          target: "ProcessKeypress",
+          actions: assign(({ context }) => {
+            // Join all accumulated utterances with a space
+            const combinedInput = context.userSpeechBuffer.join(" ");
+            console.log(`Combined user input: "${combinedInput}"`);
+            return {
+              messages: [
+                ...context.messages,
+                { role: "user" as const, content: combinedInput }
+              ],
+              userSpeechBuffer: [], // Clear the buffer
+            };
+          }),
+        },
+        {
+          // If no accumulated speech, just process the keypress
           target: "ProcessKeypress",
         },
-      },
+      ],
     },
 
     // Determine what to do based on which key was pressed
@@ -310,17 +381,38 @@ const dmMachine = setup({
           guard: "isDiscussKey",
           target: "ProcessingResponse",
         },
+
+        {
+          // If 'm' pressed, print an array of all messages so far.
+          guard: "isListMessagesKey",
+          target: "ListMessages",
+        },
+
         {
           // If manipulation key (1-4, q-r, a-f) pressed, add manipulation phrase
           guard: "isManipulationKey",
           target: "AddManipulation",
         },
         {
-          // Unknown key, go back to waiting
-          target: "WaitingForKeypress",
+          // Unknown key, go back to listening/waiting
+          target: "ListeningOrWaitingForKey",
           actions: () => console.log("Unknown key, please press L, 0, or manipulation keys (1-4, Q-R, A-F)"),
         },
       ],
+    },
+
+    // List messages after pressing "m" and return to listening/waiting stage
+    ListMessages: {
+      entry: ({ context }) => {
+        console.log("\n=== MESSAGE HISTORY ===");
+        context.messages.forEach((msg, i) => {
+          console.log(`${i + 1}. [${msg.role}]: ${msg.content}`);
+        });
+        console.log("======================\n");
+      },
+      always: {
+        target: "ListeningOrWaitingForKey"
+      }
     },
 
     // Add manipulation phrase based on key pressed
@@ -371,14 +463,14 @@ const dmMachine = setup({
           isFirstMessage: false
         }),
         onDone: {
-          target: "Listening", // After speaking manipulation, listen for user response
+          target: "ListeningOrWaitingForKey", // After speaking manipulation, go back to listening/waiting
           actions: [
-            () => console.log("Manipulation phrase spoken, now listening for user response"),
+            () => console.log("Manipulation phrase spoken, now listening for user response or keypress"),
             assign({ pendingManipulation: null })
           ],
         },
         onError: {
-          target: "Listening",
+          target: "ListeningOrWaitingForKey",
           actions: ({ event }) => console.error("Furhat speak error:", event),
         },
       },
@@ -431,11 +523,11 @@ const dmMachine = setup({
           };
         },
         onDone: {
-          target: "Listening", // After Furhat speaks, listen for next user input
-          actions: () => console.log("Finished speaking LLM response, now listening for user"),
+          target: "ListeningOrWaitingForKey", // After Furhat speaks, go back to listening/waiting
+          actions: () => console.log("Finished speaking LLM response, now listening for user or keypress"),
         },
         onError: {
-          target: "Listening",
+          target: "ListeningOrWaitingForKey",
           actions: ({ event }) => console.error("Furhat speak error:", event),
         },
       },
@@ -450,7 +542,7 @@ const dmMachine = setup({
           isFirstMessage: false
         }),
         onDone: {
-          target: "Done",
+          target: "LastQuestionWaitForYN",
           actions: assign(({ context }) => ({
             messages: [
               ...context.messages,
@@ -466,6 +558,54 @@ const dmMachine = setup({
           actions: ({ event }) => console.error("Furhat speak error:", event),
         },
       },
+    },
+
+    SessionExitingQuestionForTheResearcher: {
+      entry: () => {
+        console.log("DO YOU WANT TO PRINT THE CONVERSATION (Y/N)")
+      },
+      always: {target: "LastQuestionWaitForYN"}
+    },
+
+    LastQuestionWaitForYN: {
+        entry: () => console.log("\n>>> DO YOU WANT TO PRINT THE CONVERSATION (Y/N) <<<"),
+        invoke: {
+          src: "waitForKey",
+          onDone: {
+            actions: assign(({ event }) => ({
+              keyPressed: event.output,
+            })),
+            target: "ProcessYN",
+          },
+        },
+    },
+
+    ProcessYN: {
+      always: [
+        {
+          // CONFIRMATION FOR THE FINAL QUESTION.
+          guard: "isYesKey",
+          target: "ListMessagesBeforeFinal",
+        },
+        {
+          // CONFIRMATION FOR THE FINAL QUESTION.
+          guard: "isNoKey",
+          target: "Done",
+        },
+      ]
+    },
+
+    ListMessagesBeforeFinal: {
+      entry: ({ context }) => {
+        console.log("\n=== MESSAGE HISTORY ===");
+        context.messages.forEach((msg, i) => {
+          console.log(`${i + 1}. [${msg.role}]: ${msg.content}`);
+        });
+        console.log("======================\n");
+      },
+      always: {
+        target: "Done"
+      }
     },
 
     Done: {
@@ -485,6 +625,7 @@ actor.subscribe((snapshot) => {
   console.group("State update");
   console.log("State value:", snapshot.value);
   console.log("Key pressed:", snapshot.context.keyPressed);
+  console.log("User speech buffer:", snapshot.context.userSpeechBuffer);
   console.log("Last user message:", snapshot.context.messages.filter(m => m.role === "user").pop()?.content || "none");
   console.log("Message count:", snapshot.context.messages.length);
   console.groupEnd();
@@ -494,6 +635,7 @@ actor.subscribe((snapshot) => {
 console.log(`
 === KEYBOARD CONTROLS ===
 L = Continue discussion (send to LLM)
+M = List all of the conversation so far.
 0 = End session
 Ctrl+C = Exit immediately
 
@@ -517,4 +659,9 @@ S = Hahaha, the pregnant lady?
 D = Hahaha, the child?
 F = Hahaha, the pilot?
 ========================
+
+New thing for interruption problem: User speech is accumulated in a buffer. 
+The system keeps listening until a key is pressed.
+When a key is pressed, all accumulated speech is combined and processed into our message array.
+NOMATCH utterances are replaced with "..." in the final output.
 `);
