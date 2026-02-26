@@ -1,10 +1,48 @@
 import { setup, createActor, fromPromise, assign } from "xstate";
 import * as readline from 'readline';
+// Imports for server and file system (required for audio importing)
+import * as http from 'http';
+import * as fs from 'fs';
+import * as path from 'path';
 
-const FURHATURI = "192.168.1.11:54321";
-const OLLAMA_API_URL = "http://localhost:11434/api/chat";
+// >>> HANDLING RECORDED AUDIO IMPORTS /BEGIN <<<
+const AUDIO_PORT = 8000;
+const AUDIO_DIR = path.join(__dirname, 'audio');
+const firstMessageWaitTimeMs = 10000; // 10 seconds for the first message
 
-// Types
+http.createServer((req, res) => {
+  const filePath = path.join(AUDIO_DIR, req.url || '');
+  
+  if (fs.existsSync(filePath) && filePath.endsWith('.wav')) {
+    res.writeHead(200, { 'Content-Type': 'audio/wav' });
+    fs.createReadStream(filePath).pipe(res);
+  } else {
+    res.writeHead(404);
+    res.end('File not found');
+  }
+}).listen(AUDIO_PORT, () => {
+  console.log(`Audio server running at http://localhost:${AUDIO_PORT}`);
+});
+
+const audioFiles: Record<string, string> = {
+  '1': `http://localhost:${AUDIO_PORT}/hmm_doctor.wav`,
+  '2': `http://localhost:${AUDIO_PORT}/hmm_pregnant.wav`,
+  '3': `http://localhost:${AUDIO_PORT}/hmm_child.wav`,
+  '4': `http://localhost:${AUDIO_PORT}/hmm_pilot.wav`,
+
+  'q': `http://localhost:${AUDIO_PORT}/pause_doctor.wav`,
+  'w': `http://localhost:${AUDIO_PORT}/pause_pregnant.wav`,
+  'e': `http://localhost:${AUDIO_PORT}/pause_child.wav`,
+  'r': `http://localhost:${AUDIO_PORT}/pause_pilot.wav`,
+
+  'a': `http://localhost:${AUDIO_PORT}/hahaha_doctor.wav`,
+  's': `http://localhost:${AUDIO_PORT}/hahaha_pregnant.wav`,
+  'd': `http://localhost:${AUDIO_PORT}/hahaha_child.wav`,
+  'f': `http://localhost:${AUDIO_PORT}/hahaha_pilot.wav`,
+};
+// >>> HANDLING RECORDED AUDIO IMPORTS /END <<<
+
+// >>> TYPES /BEGIN <<<
 type Message = { // LLM dialogue structure. The system will constantly change between these roles at each turn.
   role: "assistant" | "user" | "system"; // system is a sole actor. Assistant is the LLM. User is us.
   content: string;
@@ -18,6 +56,10 @@ interface DMContext { // Our regular DMContext types.
   keyPressed: string | null; // Stores which key was pressed
   userSpeechBuffer: string[]; // NEW: Accumulates user utterances before processing
 }
+// >>> TYPES /END <<<
+
+const FURHATURI = "192.168.1.11:54321";
+const OLLAMA_API_URL = "http://localhost:11434/api/chat";
 
 // Setup readline interface for keyboard input in Node.js
 readline.emitKeypressEvents(process.stdin);
@@ -25,7 +67,7 @@ if (process.stdin.isTTY) {
   process.stdin.setRawMode(true);
 }
 
-// Furhat API functions
+// >>> Furhat Remote API functions /BEGIN <<<
 async function fhVoice(name: string) { // fh functions are fetched from Furhat's URI. They are ready-made functions.
   const myHeaders = new Headers();
   myHeaders.append("accept", "application/json");
@@ -47,8 +89,24 @@ async function fhSay(text: string, isFirstMessage: boolean = false) {
     body: "",
   });
   
-  // 6 second delay for first message (long introduction), 1 second for others
-  const delay = isFirstMessage ? 6000 : 1000;
+  // 10 second delay for first message (long introduction), 1 second for others
+  const delay = isFirstMessage ? firstMessageWaitTimeMs : 1000; // Bora's bandaid solution It let's you wait 15 secs after the first (explaining) turn of Furhat--Good old timeout on the first state.
+  await new Promise(resolve => setTimeout(resolve, delay));
+}
+
+async function fhSayAudio(audioUrl: string, isFirstMessage: boolean = false) {
+  const myHeaders = new Headers();
+  myHeaders.append("accept", "application/json");
+  const encUrl = encodeURIComponent(audioUrl);
+  
+  // Remove the 'text=' and use 'url=' instead
+  await fetch(`http://${FURHATURI}/furhat/say?url=${encUrl}&blocking=true&lipsync=true`, {
+    method: "POST",
+    headers: myHeaders,
+    body: "",
+  });
+  
+  const delay = isFirstMessage ? firstMessageWaitTimeMs : 1000;
   await new Promise(resolve => setTimeout(resolve, delay));
 }
 
@@ -62,7 +120,7 @@ async function fhAttendUser() { // This is about GAZE.
   myHeaders.append("accept", "application/json");
   return fetch(`http://${FURHATURI}/furhat/attend?user=CLOSEST`, { // Look at documentation (https://docs.furhat.io/remote-api/) in the "Attend" section
     /*
-    # Attend the user closest to the robot
+    Attend the user closest to the robot
     furhat.attend(user="CLOSEST") 
 
     There are other attend options in the doc.
@@ -85,6 +143,7 @@ async function fhListen(): Promise<string> { // Furhat's own ASR.
     .then((reader) => reader.value)
     .then((value) => JSON.parse(new TextDecoder().decode(value!)).message);
 }
+// >>> Furhat Remote API functions /END <<<
 
 // Ollama API function
 async function fetchChatCompletion(messages: Message[]): Promise<string> {
@@ -172,6 +231,9 @@ const dmMachine = setup({
     fhSpeak: fromPromise(async ({ input }: { input: { text: string; isFirstMessage: boolean } }) => {
       return fhSay(input.text, input.isFirstMessage);
     }),
+    fhSpeakAudio: fromPromise(async ({ input }: { input: { audioUrl: string; isFirstMessage: boolean } }) => {
+      return fhSayAudio(input.audioUrl, input.isFirstMessage);
+    }),
     fhListen: fromPromise(async () => {
       return fhListen();
     }),
@@ -220,7 +282,18 @@ const dmMachine = setup({
       },      
       {
         role: "assistant",
-        content: "Hello! We have a moral dilemma to talk about! Your task is to indicate which person you would choose to sacrifice in the following moral dilemma. Four people are in a hot air balloon. The balloon is losing height and about to crash into the mountains. Having thrown everything imaginable out of the balloon, including food, sandbags and other goods, their only hope is for one of them to jump to their certain death to give the balloon the extra height to clear the mountains and save the other three. The four people are: Dr Robert Lewis - a cancer research scientist, who believes he is about to discover a cure for most common types of cancer. He is a good friend of Susanne and William. Mrs. Susanne Harris - a primary school teacher. She is over the moon because she is 7 months pregnant with her second child. Mr. William Harris husband of Susanne, who he loves very much. He is the pilot of the balloon and the only one on board with balloon flying experience. Miss Heather Sloan - a 9-year-old music prodigy, considered by many to be a twenty-first century Mozart. Come to an agreement about who is to be allowed to stay in the balloon, and who is to jump. You must discuss all 4 balloon passengers and consider the reasons why they should or shouldnt remain in the balloon."        
+        content: "intro intro intro"  // When real experiment starts, this will be replaced with the actual introduction dilemma text: "Hello! We have a moral dilemma to talk about! Your task is to indicate which person you would choose to sacrifice in the following moral dilemma. Four people are in a hot air balloon. The balloon is losing height and about to crash into the mountains. Having thrown everything imaginable out of the balloon, including food, sandbags and other goods, their only hope is for one of them to jump to their certain death to give the balloon the extra height to clear the mountains and save the other three. The four people are: Dr Robert Lewis - a cancer research scientist, who believes he is about to discover a cure for most common types of cancer. He is a good friend of Susanne and William. Mrs. Susanne Harris - a primary school teacher. She is over the moon because she is 7 months pregnant with her second child. Mr. William Harris husband of Susanne, who he loves very much. He is the pilot of the balloon and the only one on board with balloon flying experience. Miss Heather Sloan - a 9-year-old music prodigy, considered by many to be a twenty-first century Mozart. Come to an agreement about who is to be allowed to stay in the balloon, and who is to jump. You must discuss all 4 balloon passengers and consider the reasons why they should or shouldnt remain in the balloon."        
+      /* Example prompt:
+    You are a helpful voice assistant. You will be chatting with the user using spoken language. DO NOT use markdown in
+    responses unless explicitly asked to do so. Only output your own response, and keep it succinct. \n\nBoth you and the user are presented with an artwork and you need to express your opinion about it. In dialogue, you need to come to agreement about the artistic qualities of the work. You can "see" the image through the vision module which tells you the following:\n\n
+    #{image_description}
+    \n\nYou will be chatting with the user using spoken language. Be specific!
+    \n\nInstead of apologising send one token in brackets, like this: [apology]. Don't produce words like "sorry" and so on.  But you can explain the reasons for the apology.
+    \n\nFor instance, if the user is silent: [apology] I didn't hear you.
+    \n\nPlease, be consise. Limit your response to 20 words.
+      */
+      
+      
       }
     ],
   },
@@ -418,35 +491,38 @@ const dmMachine = setup({
     // Add manipulation phrase based on key pressed
     AddManipulation: {
       entry: assign(({ context }) => {
-        // Map keys to manipulation phrases
-        const manipulations: Record<string, string> = {
+        const AUDIO_PORT = 8000; 
+        
+        // Map keys to audio file URLs
+        const audioFiles: Record<string, string> = {
           // Hmm versions (1-4)
-          '1': '<prosody rate="40%">Hmmm...</prosody>, the Doctor?',
-          '3': '<prosody rate="40%">Hmmm...</prosody>, the child?',
-          '4': '<prosody rate="40%">Hmmm...</prosody>, the pilot?',
-          '2': '<prosody rate="40%">Hmmm...</prosody>, the pregnant lady?',
+          '1': `http://localhost:${AUDIO_PORT}/hmm_doctor.wav`,
+          '2': `http://localhost:${AUDIO_PORT}/hmm_pregnant.wav`,
+          '3': `http://localhost:${AUDIO_PORT}/hmm_child.wav`,
+          '4': `http://localhost:${AUDIO_PORT}/hmm_pilot.wav`,
           // Pause versions (q, w, e, r)
-          'q': '<break time="1.2s"/> The Doctor?',
-          'w': '<break time="1.2s"/> The pregnant lady?',
-          'e': '<break time="1.2s"/> The child?',
-          'r': '<break time="1.2s"/> The pilot?',
+          'q': `http://localhost:${AUDIO_PORT}/pause_doctor.wav`,
+          'w': `http://localhost:${AUDIO_PORT}/pause_pregnant.wav`,
+          'e': `http://localhost:${AUDIO_PORT}/pause_child.wav`,
+          'r': `http://localhost:${AUDIO_PORT}/pause_pilot.wav`,
           // Hahaha versions (a, s, d, f)
-          'a': '<mstts:backgroundaudio src="https://raw.githubusercontent.com/Bora-Valar-Kara/dialogue-systems-1-2025/refs/heads/main/radio_test.mp3" volume="2.0" />, the Doctor?',
-          's': 'Hahaha, the pregnant lady?',
-          'd': 'Hahaha, the child?',
-          'f': 'Hahaha, the pilot?',
+          'a': `http://localhost:${AUDIO_PORT}/laugh_doctor.wav`,
+          's': `http://localhost:${AUDIO_PORT}/laugh_pregnant.wav`,
+          'd': `http://localhost:${AUDIO_PORT}/laugh_child.wav`,
+          'f': `http://localhost:${AUDIO_PORT}/laugh_pilot.wav`,
         };
         
-        const phrase = manipulations[context.keyPressed || ''];
-        console.log(`Adding manipulation phrase: ${phrase}`);
+        const audioUrl = audioFiles[context.keyPressed || ''];
+        const textForHistory = `[Audio manipulation: ${context.keyPressed}]`; // For tracking in messages
         
-        // Add the manipulation phrase as an assistant message
+        console.log(`Queuing audio: ${audioUrl}`);
+        
         return {
           messages: [
             ...context.messages,
-            { role: "assistant" as const, content: phrase }
+            { role: "assistant" as const, content: textForHistory }
           ],
-          pendingManipulation: phrase,
+          pendingManipulation: audioUrl, // Now stores URL instead of text phrase
         };
       }),
       always: {
@@ -457,21 +533,21 @@ const dmMachine = setup({
     // Speak the manipulation phrase
     SpeakManipulation: {
       invoke: {
-        src: "fhSpeak",
+        src: "fhSpeakAudio", // Changed from "fhSpeak" to "fhSpeakAudio"
         input: ({ context }) => ({
-          text: context.pendingManipulation || "",
+          audioUrl: context.pendingManipulation || "",
           isFirstMessage: false
         }),
         onDone: {
-          target: "ListeningOrWaitingForKey", // After speaking manipulation, go back to listening/waiting
+          target: "ListeningOrWaitingForKey",
           actions: [
-            () => console.log("Manipulation phrase spoken, now listening for user response or keypress"),
+            () => console.log("Manipulation audio played, now listening for user response"),
             assign({ pendingManipulation: null })
           ],
         },
         onError: {
           target: "ListeningOrWaitingForKey",
-          actions: ({ event }) => console.error("Furhat speak error:", event),
+          actions: ({ event }) => console.error("Furhat audio playback error:", event),
         },
       },
     },
