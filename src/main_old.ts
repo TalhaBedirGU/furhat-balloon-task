@@ -1,7 +1,7 @@
 import { setup, createActor, fromPromise, assign } from "xstate";
 import * as readline from 'readline';
 
-const FURHATURI = "127.0.0.1:54321";
+const FURHATURI = "192.168.1.11:54321";
 const OLLAMA_API_URL = "http://localhost:11434/api/chat";
 
 // Types
@@ -47,8 +47,8 @@ async function fhSay(text: string, isFirstMessage: boolean = false) {
     body: "",
   });
   
-  // 10 second delay for first message (long introduction), 1 second for others
-  const delay = isFirstMessage ? 13000 : 1000; // Bora's bandaid solution It let's you wait 15 secs after the first (explaining) turn of Furhat--Good old timeout on the first state.
+  // 6 second delay for first message (long introduction), 1 second for others
+  const delay = isFirstMessage ? 6000 : 1000;
   await new Promise(resolve => setTimeout(resolve, delay));
 }
 
@@ -421,17 +421,17 @@ const dmMachine = setup({
         // Map keys to manipulation phrases
         const manipulations: Record<string, string> = {
           // Hmm versions (1-4)
-          '1': 'Hmm, the Doctor?',
-          '2': 'Hmm, the pregnant lady?',
-          '3': 'Hmm, the child?',
-          '4': 'Hmm, the pilot?',
+          '1': '<prosody rate="40%">Hmmm...</prosody>, the Doctor?',
+          '3': '<prosody rate="40%">Hmmm...</prosody>, the child?',
+          '4': '<prosody rate="40%">Hmmm...</prosody>, the pilot?',
+          '2': '<prosody rate="40%">Hmmm...</prosody>, the pregnant lady?',
           // Pause versions (q, w, e, r)
-          'q': '........ The Doctor?',
-          'w': '........ The pregnant lady?',
-          'e': '........ The child?',
-          'r': '........ The pilot?',
+          'q': '<break time="1.2s"/> The Doctor?',
+          'w': '<break time="1.2s"/> The pregnant lady?',
+          'e': '<break time="1.2s"/> The child?',
+          'r': '<break time="1.2s"/> The pilot?',
           // Hahaha versions (a, s, d, f)
-          'a': 'Hahaha, the Doctor?',
+          'a': '<mstts:backgroundaudio src="https://raw.githubusercontent.com/Bora-Valar-Kara/dialogue-systems-1-2025/refs/heads/main/radio_test.mp3" volume="2.0" />, the Doctor?',
           's': 'Hahaha, the pregnant lady?',
           'd': 'Hahaha, the child?',
           'f': 'Hahaha, the pilot?',
