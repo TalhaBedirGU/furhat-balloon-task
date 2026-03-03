@@ -22,3 +22,8 @@ Based on:
 https://github.com/GU-CLASP/dialogue-systems-2-2025
 
 https://github.com/vladmaraev/xstate-furhat-starter
+
+# To run audio in a Wizard-of-Oz setting, run this on a **New Terminal**
+```
+python3 src/audio_monitor.py
+```

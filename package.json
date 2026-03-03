@@ -3,7 +3,9 @@
   "packageManager": "yarn@3.6.3",
   "dependencies": {
     "@types/node": "^22.7.2",
-    "xstate": "^5.22.0"
+    "speaker": "^0.5.5",
+    "xstate": "^5.22.0",
+    "zeromq": "^6.5.0"
   },
   "devDependencies": {
     "esbuild": "^0.25.10",

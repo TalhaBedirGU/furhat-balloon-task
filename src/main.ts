@@ -220,7 +220,7 @@ const dmMachine = setup({
       },      
       {
         role: "assistant",
-        content: "Hello! We have a moral dilemma to talk about! Your task is to indicate which person you would choose to sacrifice in the following moral dilemma. Four people are in a hot air balloon. The balloon is losing height and about to crash into the mountains. Having thrown everything imaginable out of the balloon, including food, sandbags and other goods, their only hope is for one of them to jump to their certain death to give the balloon the extra height to clear the mountains and save the other three. The four people are: Dr Robert Lewis - a cancer research scientist, who believes he is about to discover a cure for most common types of cancer. He is a good friend of Susanne and William. Mrs. Susanne Harris - a primary school teacher. She is over the moon because she is 7 months pregnant with her second child. Mr. William Harris husband of Susanne, who he loves very much. He is the pilot of the balloon and the only one on board with balloon flying experience. Miss Heather Sloan - a 9-year-old music prodigy, considered by many to be a twenty-first century Mozart. Come to an agreement about who is to be allowed to stay in the balloon, and who is to jump. You must discuss all 4 balloon passengers and consider the reasons why they should or shouldnt remain in the balloon."        
+        content: "Hello! We have a moral dilemma to talk about! You need to sacrifice one person among four people! Four people are in a hot air balloon. The balloon is losing height and about to crash into the mountains. Having thrown everything imaginable out of the balloon, their only hope is for one of them to jump to their certain death to gain height to clear the mountains and save the other three. The four people are: Dr Robert Lewis - a cancer research scientist, who believes he is about to discover a cure for most common types of cancer. He is a good friend of Susanne and William. Mrs. Susanne Harris - a primary school teacher. She is over the moon because she is 7 months pregnant with her second child. Mr. William Harris husband of Susanne, who he loves very much. He is the pilot of the balloon and the only one on board with balloon flying experience. Miss Heather Sloan - a 9-year-old music prodigy, considered by many to be a twenty-first century Mozart. Discuss and decide who is to be allowed to stay in the balloon, and who is to jump. You must discuss all 4 balloon passengers and consider the reasons why they should or shouldnt remain in the balloon."        
       }
     ],
   },
@@ -420,21 +420,28 @@ const dmMachine = setup({
       entry: assign(({ context }) => {
         // Map keys to manipulation phrases
         const manipulations: Record<string, string> = {
-          // Hmm versions (1-4)
-          '1': '<prosody rate="40%">Hmmm...</prosody>, the Doctor?',
-          '3': '<prosody rate="40%">Hmmm...</prosody>, the child?',
-          '4': '<prosody rate="40%">Hmmm...</prosody>, the pilot?',
-          '2': '<prosody rate="40%">Hmmm...</prosody>, the pregnant lady?',
-          // Pause versions (q, w, e, r)
-          'q': '<break time="1.2s"/> The Doctor?',
+          // Hmm interventions (1-4)
+          '1': '<prosody rate="-90%">Hmmm...</prosody>, the doctor?',
+          '2': '<prosody rate="-90%">Hmmm...</prosody>, the pregnant lady?',
+          '3': '<prosody rate="-90%">Hmmm...</prosody>, the child?',
+          '4': '<prosody rate="-90%">Hmmm...</prosody>, the pilot?',
+          // Pause interventions (q, w, e, r)
+          'q': '<break time="1.2s"/> The doctor?',
           'w': '<break time="1.2s"/> The pregnant lady?',
           'e': '<break time="1.2s"/> The child?',
           'r': '<break time="1.2s"/> The pilot?',
-          // Hahaha versions (a, s, d, f)
-          'a': '<mstts:backgroundaudio src="https://raw.githubusercontent.com/Bora-Valar-Kara/dialogue-systems-1-2025/refs/heads/main/radio_test.mp3" volume="2.0" />, the Doctor?',
-          's': 'Hahaha, the pregnant lady?',
-          'd': 'Hahaha, the child?',
-          'f': 'Hahaha, the pilot?',
+          // Hahaha interventions (a, s, d, f)
+          'a': '<prosody rate="-50%">Hahaha</prosody>, the doctor?',
+          's': '<prosody rate="-50%">Hahaha</prosody>, the pregnant lady?',
+          'd': '<prosody rate="-50%">Hahaha</prosody>, the child?',
+          'f': '<prosody rate="-50%">Hahaha</prosody>, the pilot?',
+          // Switch topic interventions (z, x, c, v)
+          'z': 'Cool, shall we talk about the doctor now?',
+          'x': 'Great, shall we talk about the pregnant lady now?',
+          'c': 'Perfect, shall we talk about the child now?',
+          'v': 'Nice, shall we talk about the pilot now?',
+          // Switch to the next topic
+          'n': 'Good, shall we talk about the next passenger?',
         };
         
         const phrase = manipulations[context.keyPressed || ''];
@@ -658,6 +665,15 @@ A = Hahaha, the Doctor?
 S = Hahaha, the pregnant lady?
 D = Hahaha, the child?
 F = Hahaha, the pilot?
+
+FORCE CHANGE TOPIC:
+Z = Can we talk about the doctor now? 
+X = Can we talk about the pregnant lady now?
+C = Can we talk about the child now?
+V = Can we talk about the pilot now?
+
+N = Can we talk about the next passenger now?
+
 ========================
 
 New thing for interruption problem: User speech is accumulated in a buffer. 
