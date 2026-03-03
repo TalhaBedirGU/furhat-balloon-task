@@ -11,5 +11,5 @@
     "lib": ["dom", "es2016"],
     "moduleResolution": "node"
   },
-  "include": ["src/main.ts"]
+  "include": ["src/main_manual_audio.ts"]
 }
