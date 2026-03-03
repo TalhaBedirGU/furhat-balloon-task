@@ -396,7 +396,7 @@ const dmMachine = setup({
         {
           // Unknown key, go back to listening/waiting
           target: "ListeningOrWaitingForKey",
-          actions: () => console.log("Unknown key, please press L, 0, or manipulation keys (1-4, Q-R, A-F)"),
+          actions: () => console.log("Unknown key, please press L, 0, or manipulation keys (1-4, Q-R, A-F, Z-V) or B, N."),
         },
       ],
     },
