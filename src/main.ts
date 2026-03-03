@@ -198,7 +198,7 @@ const dmMachine = setup({
     // Check if any manipulation key was pressed (1-4, q-r, a-f)
     isManipulationKey: ({ context }) => {
       const key = context.keyPressed;
-      return key !== null && ['1', '2', '3', '4', 'q', 'w', 'e', 'r', 'a', 's', 'd', 'f'].includes(key);
+      return key !== null && ['1', '2', '3', '4', 'q', 'w', 'e', 'r', 'a', 's', 'd', 'f', 'z', 'x', 'c', 'v', 'b', 'n'].includes(key);
     },
     // Check if it is Yes or No key:
     isYesKey: ({ context }) => context.keyPressed === 'y',
@@ -442,6 +442,8 @@ const dmMachine = setup({
           'v': 'Nice, shall we talk about the pilot now?',
           // Switch to the next topic
           'n': 'Good, shall we talk about the next passenger?',
+          // 
+          'b': 'So, based on your discussions, who do you think should jump?',
         };
         
         const phrase = manipulations[context.keyPressed || ''];
